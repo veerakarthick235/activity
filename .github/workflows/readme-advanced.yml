@@ -14,8 +14,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Install jq
         run: sudo apt-get install -y jq
@@ -28,12 +26,9 @@ jobs:
           CITY="Erode,IN"
           URL="https://api.openweathermap.org/data/2.5/weather?q=${CITY}&appid=${OWM_KEY}&units=metric"
           RESP=$(curl -s "$URL")
-          TEMP=$(jq -r '.main.temp' <<< "$RESP")
-          DESC=$(jq -r '.weather[0].description' <<< "$RESP")
-          HUMID=$(jq -r '.main.humidity' <<< "$RESP")
-          echo "TEMP=$TEMP" >> $GITHUB_OUTPUT
-          echo "DESC=$DESC" >> $GITHUB_OUTPUT
-          echo "HUMID=$HUMID" >> $GITHUB_OUTPUT
+          echo "TEMP=$(jq -r '.main.temp' <<< "$RESP")" >> $GITHUB_OUTPUT
+          echo "DESC=$(jq -r '.weather[0].description' <<< "$RESP")" >> $GITHUB_OUTPUT
+          echo "HUMID=$(jq -r '.main.humidity' <<< "$RESP")" >> $GITHUB_OUTPUT
 
       - name: Get daily quote
         id: quote
@@ -47,7 +42,7 @@ jobs:
           TIME=$(TZ="Asia/Kolkata" date +"%A, %d %B %Y %H:%M:%S %Z")
           echo "LOCAL_TIME=$TIME" >> $GITHUB_OUTPUT
 
-      - name: Count today's commits (IST)
+      - name: Count commits today
         id: commits
         run: |
           SINCE=$(TZ="Asia/Kolkata" date -d "today 00:00" --iso-8601=seconds)
@@ -56,34 +51,33 @@ jobs:
 
       - name: Prepare README section
         run: |
-          TODAY=$(TZ="Asia/Kolkata" date +"%A, %d %B %Y")
-          cat > section.md <<EOF
-### 📅 Date: **${TODAY}**
-### 🕒 Local Time (IST): **${{ steps.ist.outputs.LOCAL_TIME }}**
-
-### ☁️ Weather — Erode, India
-- Temperature: **${{ steps.weather.outputs.TEMP }}°C**
-- Condition: **${{ steps.weather.outputs.DESC }}**
-- Humidity: **${{ steps.weather.outputs.HUMID }}%**
-
-### 💬 Quote of the Day
-> _${{ steps.quote.outputs.QUOTE }}_
-
-### 💪 Motivational message
-> _You are improving daily — keep going._
-
-### 📈 Repo Activity
-- Commits today: **${{ steps.commits.outputs.COUNT }}**
-
-![](https://img.shields.io/badge/Last_Update-${TODAY// /%20}-brightgreen?style=for-the-badge&logo=github)
-EOF
+          {
+            echo "### 📅 Date: **$(TZ='Asia/Kolkata' date '+%A, %d %B %Y')**"
+            echo "### 🕒 Local Time (IST): **${{ steps.ist.outputs.LOCAL_TIME }}**"
+            echo ""
+            echo "### ☁️ Weather — Erode, India"
+            echo "- Temperature: **${{ steps.weather.outputs.TEMP }}°C**"
+            echo "- Condition: **${{ steps.weather.outputs.DESC }}**"
+            echo "- Humidity: **${{ steps.weather.outputs.HUMID }}%**"
+            echo ""
+            echo "### 💬 Quote of the Day"
+            echo "> _${{ steps.quote.outputs.QUOTE }}_"
+            echo ""
+            echo "### 💪 Motivational Message"
+            echo "> _Keep improving daily — success compounds!_"
+            echo ""
+            echo "### 📈 Repo Activity"
+            echo "- Commits today: **${{ steps.commits.outputs.COUNT }}**"
+            echo ""
+            echo "![Last Update](https://img.shields.io/badge/Updated-$(date +%Y--%m--%d)-brightgreen?style=for-the-badge)"
+          } > section.md
 
       - name: Update README
         run: |
           START="<!--START_SECTION:daily_update-->"
           END="<!--END_SECTION:daily_update-->"
-          awk -v s="$START" -v e="$END" -v r="$(sed 's/[\/&]/\\&/g' section.md)" '
-            $0 ~ s {print; print r; skip=1; next}
+          awk -v s="$START" -v e="$END" -v new="$(sed 's/[\/&]/\\&/g' section.md)" '
+            $0 ~ s {print; print new; skip=1; next}
             $0 ~ e {skip=0}
             skip==0 {print}
           ' README.md > README_new.md
@@ -91,9 +85,8 @@ EOF
 
       - name: Commit changes
         run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
           git add README.md
-          git commit -m "🔄 Advanced daily README update" || true
+          git commit -m "Advanced daily README update" || true
           git push
-          
