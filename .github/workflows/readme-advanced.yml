@@ -2,7 +2,7 @@ name: Advanced Daily README Update
 
 on:
   schedule:
-    - cron: "0 0 * * *"   # daily at 00:00 UTC
+    - cron: "0 0 * * *"
   workflow_dispatch: {}
 
 jobs:
@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      # required so the workflow can commit README changes
 
     steps:
       - name: Checkout repository
@@ -18,191 +17,82 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install utilities
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y jq
+      - name: Install jq
+        run: sudo apt-get install -y jq
 
       - name: Fetch weather (Erode, IN)
         id: weather
         env:
           OWM_KEY: ${{ secrets.OWM_API_KEY }}
         run: |
-          # OpenWeatherMap current weather (metric units)
           CITY="Erode,IN"
           URL="https://api.openweathermap.org/data/2.5/weather?q=${CITY}&appid=${OWM_KEY}&units=metric"
           RESP=$(curl -s "$URL")
-          echo "$RESP" > weather.json
-          TEMP=$(jq -r '.main.temp' weather.json)
-          DESC=$(jq -r '.weather[0].description' weather.json)
-          HUMID=$(jq -r '.main.humidity' weather.json)
-          echo "temp=${TEMP}" >> $GITHUB_OUTPUT
-          echo "desc=${DESC}" >> $GITHUB_OUTPUT
-          echo "humid=${HUMID}" >> $GITHUB_OUTPUT
+          TEMP=$(jq -r '.main.temp' <<< "$RESP")
+          DESC=$(jq -r '.weather[0].description' <<< "$RESP")
+          HUMID=$(jq -r '.main.humidity' <<< "$RESP")
+          echo "TEMP=$TEMP" >> $GITHUB_OUTPUT
+          echo "DESC=$DESC" >> $GITHUB_OUTPUT
+          echo "HUMID=$HUMID" >> $GITHUB_OUTPUT
 
       - name: Get daily quote
         id: quote
         run: |
-          Q=$(curl -s "https://api.quotable.io/random" | jq -r '.content + " — " + .author')
-          echo "q=${Q}" >> $GITHUB_OUTPUT
+          Q=$(curl -s "https://api.quotable.io/random" | jq -r '.content')
+          echo "QUOTE=$Q" >> $GITHUB_OUTPUT
 
-      - name: Get local time (IST)
-        id: time
+      - name: Local time (IST)
+        id: ist
         run: |
-          # get current local time in Asia/Kolkata
-          LOCAL_TIME=$(TZ="Asia/Kolkata" date +"%A, %d %B %Y %H:%M:%S %Z")
-          echo "local_time=${LOCAL_TIME}" >> $GITHUB_OUTPUT
+          TIME=$(TZ="Asia/Kolkata" date +"%A, %d %B %Y %H:%M:%S %Z")
+          echo "LOCAL_TIME=$TIME" >> $GITHUB_OUTPUT
 
-      - name: Count commits today (IST)
-        id: commits_today
+      - name: Count today's commits (IST)
+        id: commits
         run: |
-          # compute start-of-day in UTC corresponding to today's 00:00 in IST
-          SINCE=$(TZ="Asia/Kolkata" date -d 'today 00:00' --iso-8601=seconds)
-          # convert to RFC 3339 if necessary (git understands ISO-8601)
+          SINCE=$(TZ="Asia/Kolkata" date -d "today 00:00" --iso-8601=seconds)
           COUNT=$(git rev-list --count --since="$SINCE" HEAD)
-          echo "count=${COUNT}" >> $GITHUB_OUTPUT
+          echo "COUNT=$COUNT" >> $GITHUB_OUTPUT
 
-      - name: Get GitHub basic stats
-        id: gh_stats
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          USER="${{ github.repository_owner }}"
-          USER_JSON=$(curl -s -H "Authorization: bearer $GITHUB_TOKEN" "https://api.github.com/users/$USER")
-          FOLLOWERS=$(echo "$USER_JSON" | jq -r '.followers')
-          PUBLIC_REPOS=$(echo "$USER_JSON" | jq -r '.public_repos')
-          echo "followers=${FOLLOWERS}" >> $GITHUB_OUTPUT
-          echo "public_repos=${PUBLIC_REPOS}" >> $GITHUB_OUTPUT
-
-      - name: Get contribution calendar (last year) and compute streak
-        id: streak
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          USER="${{ github.repository_owner }}"
-          # GraphQL query to fetch contribution calendar days (last year)
-          read -r -d '' Q <<'GRAPHQL'
-          {"query": "query($login:String!){ user(login:$login){ contributionsCollection{ contributionCalendar{ weeks{ contributionDays{ date contributionCount } } } } } }",
-           "variables":{"login":"${USER}"}}
-GRAPHQL
-
-          # Use curl to call GraphQL and extract the days array
-          RESP=$(curl -s -X POST -H "Authorization: bearer $GITHUB_TOKEN" -H "Content-Type: application/json" \
-            -d "$Q" https://api.github.com/graphql)
-
-          echo "$RESP" > contrib.json
-
-          # Build a list of dates and counts in chronological order
-          DAYS=$(jq -r '.data.user.contributionsCollection.contributionCalendar.weeks[] .contributionDays[] | "\(.date) \(.contributionCount)"' contrib.json)
-
-          # Convert to an array and compute current streak (consecutive days from today backward with count>0)
-          # We'll iterate from newest to oldest
-          STREAK=0
-          TODAY=$(date -u +"%Y-%m-%d")
-          # create associative array of date->count
-          declare -A MAP
-          while read -r line; do
-            d=$(echo "$line" | awk '{print $1}')
-            c=$(echo "$line" | awk '{print $2}')
-            MAP["$d"]="$c"
-          done <<< "$DAYS"
-
-          # iterate backward from today
-          cur=$TODAY
-          while true; do
-            c=${MAP[$cur]:-0}
-            if [ "$c" -gt 0 ]; then
-              STREAK=$((STREAK+1))
-              # move date one day back
-              cur=$(date -I -d "$cur - 1 day")
-            else
-              break
-            fi
-          done
-
-          echo "streak=${STREAK}" >> $GITHUB_OUTPUT
-
-      - name: Pick a daily coding challenge (simple curated list)
-        id: challenge
-        run: |
-          # A small curated list. Expand as you like.
-          read -r -d '' LIST <<'CHALLENGES'
-Reverse a string without using built-in reverse.
-Find first non-repeating character in a string.
-Implement binary search (iterative).
-Given an array, return indices of two numbers that add to target.
-Check if a number is a power of two.
-Find the maximum subarray sum (Kadane's algorithm).
-Merge two sorted linked lists.
-Print level order traversal of a binary tree.
-Find gcd of two numbers.
-Implement a queue using two stacks.
-CHALLENGES
-
-          # pick a random line
-          COUNT=$(echo "$LIST" | wc -l)
-          IDX=$(( (RANDOM % COUNT) + 1 ))
-          CH=$(echo "$LIST" | sed -n "${IDX}p")
-          echo "challenge=${CH}" >> $GITHUB_OUTPUT
-
-      - name: Build README section file
+      - name: Prepare README section
         run: |
           TODAY=$(TZ="Asia/Kolkata" date +"%A, %d %B %Y")
-          TEMP="${{ steps.weather.outputs.temp }}"
-          DESC="${{ steps.weather.outputs.desc }}"
-          HUM="${{ steps.weather.outputs.humid }}"
-          QUOTE="${{ steps.quote.outputs.q }}"
-          LOCAL="${{ steps.time.outputs.local_time }}"
-          COMMITS="${{ steps.commits_today.outputs.count }}"
-          FOLLOWERS="${{ steps.gh_stats.outputs.followers }}"
-          REPOS="${{ steps.gh_stats.outputs.public_repos }}"
-          STREAK="${{ steps.streak.outputs.streak }}"
-          CHALLENGE="${{ steps.challenge.outputs.challenge }}"
-
-          # Animated/fancy badge using shields.io (badge displays last update date)
-          BADGE_URL="https://img.shields.io/badge/Last_Update-$(echo $TODAY | sed 's/ /%20/g')-brightgreen?style=for-the-badge&logo=github"
-
-          cat > new_section.md <<EOF
-### 📅 Date: **$TODAY**  |  🕘 Local Time (IST): **$LOCAL**
+          cat > section.md <<EOF
+### 📅 Date: **${TODAY}**
+### 🕒 Local Time (IST): **${{ steps.ist.outputs.LOCAL_TIME }}**
 
 ### ☁️ Weather — Erode, India
-- Temperature: **${TEMP}°C**
-- Condition: **${DESC}**
-- Humidity: **${HUM}%**
+- Temperature: **${{ steps.weather.outputs.TEMP }}°C**
+- Condition: **${{ steps.weather.outputs.DESC }}**
+- Humidity: **${{ steps.weather.outputs.HUMID }}%**
 
 ### 💬 Quote of the Day
-> _${QUOTE}_
+> _${{ steps.quote.outputs.QUOTE }}_
 
 ### 💪 Motivational message
-> _Keep building — small steps every day compound into big wins._
+> _You are improving daily — keep going._
 
-### 📈 GitHub Stats
-- Followers: **${FOLLOWERS}**
-- Public repos: **${REPOS}**
-- Commits today (this repo): **${COMMITS}**
-- Current GitHub streak (consecutive days with contributions): **${STREAK}**
+### 📈 Repo Activity
+- Commits today: **${{ steps.commits.outputs.COUNT }}**
 
-### 🧩 Daily Coding Challenge
-**${CHALLENGE}**
-
-![](${BADGE_URL})
+![](https://img.shields.io/badge/Last_Update-${TODAY// /%20}-brightgreen?style=for-the-badge&logo=github)
 EOF
 
-      - name: Replace section in README
+      - name: Update README
         run: |
           START="<!--START_SECTION:daily_update-->"
           END="<!--END_SECTION:daily_update-->"
-          awk -v start="$START" -v end="$END" -v new="$(sed 's/[\/&]/\\&/g' new_section.md)" '
-            $0 ~ start {print; print new; skip=1; next}
-            $0 ~ end {skip=0}
+          awk -v s="$START" -v e="$END" -v r="$(sed 's/[\/&]/\\&/g' section.md)" '
+            $0 ~ s {print; print r; skip=1; next}
+            $0 ~ e {skip=0}
             skip==0 {print}
-          ' README.md > README_UPDATED.md
-          mv README_UPDATED.md README.md
+          ' README.md > README_new.md
+          mv README_new.md README.md
 
-      - name: Commit and push README changes
+      - name: Commit changes
         run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
           git add README.md
-          git commit -m "🔄 Advanced daily README update" || exit 0
-          git push origin HEAD:${{ github.ref_name }}
+          git commit -m "🔄 Advanced daily README update" || true
+          git push
