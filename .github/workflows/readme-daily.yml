@@ -1,0 +1,56 @@
+name: Daily README Update
+
+on:
+  schedule:
+    - cron: "0 0 * * *"   # Runs every day at 00:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get daily quote
+        id: quote
+        run: |
+          QUOTE=$(curl -s "https://api.quotable.io/random" | jq -r '.content')
+          echo "quote=$QUOTE" >> $GITHUB_OUTPUT
+
+      - name: Prepare updated content
+        id: content
+        run: |
+          TODAY=$(date +"%A, %d %B %Y")
+
+          cat <<EOF > daily_content.txt
+### 📅 Date: **$TODAY**
+
+### 💬 Quote of the Day
+> _${{ steps.quote.outputs.quote }}_
+
+### 🟢 Auto-updated by GitHub Actions
+EOF
+
+      - name: Update README section
+        run: |
+          START="<!--START_SECTION:daily_update-->"
+          END="<!--END_SECTION:daily_update-->"
+          
+          CONTENT=$(sed -e 's/[\/&]/\\&/g' daily_content.txt)
+          awk -v start="$START" -v end="$END" -v content="$CONTENT" '
+            $0 ~ start {print; print content; skip=1; next}
+            $0 ~ end {skip=0}
+            skip==0 {print}
+          ' README.md > README_UPDATED.md
+
+          mv README_UPDATED.md README.md
+
+      - name: Commit and push
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git add README.md
+          git commit -m "🔄 Auto-update README (daily)" || exit 0
+          git push
