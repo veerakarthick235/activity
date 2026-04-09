@@ -86,7 +86,7 @@ jobs:
       - name: Commit changes
         run: |
           git config user.name "veerakarthick235"
-          git config user.email "veerakarthick235@users.noreply.github.com"
+          git config user.email "veerakarthick235@gmailcom"
           git add README.md
           git commit -m "Advanced daily README update" || true
           git push
